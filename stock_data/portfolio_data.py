@@ -1,9 +1,9 @@
 import pandas as pd
 import numpy as np
 import os
-from stock_data.stock_data import stock_data
-from stock_data.stock_data_connector import stock_data_connector
-from stock_data.s3_connector import s3_connector
+from stock_data import stock_data
+from stock_data import stock_data_connector
+from stock_data import s3_connector
 from datetime import date, timedelta
 import boto3
 from botocore.exceptions import ClientError
@@ -103,7 +103,7 @@ class portfolio_data:
             labeled_list.append({'date':items[0], 'ticker':items[1]})
             stocks_db.append(items[1])
             unique_dates.add(items[0])
-        
+
         new_stocks = list(set(equity_data['symbol'].to_list())-set(stocks_db))
 
         for symbol in new_stocks:
@@ -131,6 +131,7 @@ class portfolio_data:
             except Exception as e:
                 print(e)
         prices_df = pd.concat(prices_list)
+        print(prices_df.loc[prices_df['Ticker']=='AAPL'].head())
         
 
         prices_df.to_csv(price_data_file_path, index=False)
