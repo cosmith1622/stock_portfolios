@@ -1,7 +1,24 @@
 from stock_data import portfolio_data
+from stock_data import analysis
+from stock_data import portfolio
+from stock_data import stock_data
+import pandas as pd
 
 
 if __name__ == "__main__":
+
+
+    test = stock_data()
+    #df = test.get_stocks('DCOM', start='2001-01-01', auto_adjust=False, threads=True)
+    ana = analysis()
+    #ana.get_stock_data()
+    df = ana.add_columns(252)
+    #df =  df.loc[df['ticker']=='DCOM'].copy()
+    #df = df.loc[(df['trading_date']=='2001-01-02') | (df['trading_date']=='2001-01-09')]
+    #print(df[['trading_date', 'close_price', 'probability', 'upper_band', 'lower_band']])
+    pf = portfolio(df,100,5000,20)
+    test1 = pf.update_portfolio()
+    #print(test1[['trading_date', 'ticker', 'close_price', 'last_year_price', 'yoy_change']].head())
 
 
     """
@@ -11,7 +28,9 @@ if __name__ == "__main__":
 
     """
     pdata = portfolio_data()
-    data =  pdata.get_latest_stock_data('stock-bucket-01')
+    #data =  pdata.get_latest_stock_data('stock-bucket-01')
+    data = pd.read_csv('2025-09-27_latest_stock_data_copy.csv')
+    data['0'] = '1999-12-31'
 
     """
         Step 2 get updated stock information for the stocks

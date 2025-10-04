@@ -1,20 +1,19 @@
 import pandas as pd
 import numpy as np
-from yahoo_fin import stock_info
-import concurrent.futures
 from yfinance import Ticker, Tickers, EquityQuery, screen
 from typing import Union
 from curl_cffi import requests
 
 class stock_data:
     def __init__(self):
-        self.data = stock_info
         self.stock_data = None
         self.research_equities = None
         self.session = requests.Session(impersonate="chrome")
 
     def find_equities(self,pagination):
 
+        #create query for stocks, we look for stocks in a given exchange, floor price and 
+        #recent peformance
         query = EquityQuery('and', [
                                     EquityQuery('is-in', ['exchange', 'NMS', 'NYQ']),
                                     EquityQuery('lte', ['eodprice',100]),
@@ -25,6 +24,8 @@ class stock_data:
         all_data = []
         step = pagination
 
+        #iterate throught the list of equities 
+        #return the equities
         for i in range(0,response['total'],step):
             
             if i != 0:
@@ -48,6 +49,8 @@ class stock_data:
     
     def _get_equities_info(self, data):
         
+        #return data about the equities found 
+        #based on the equities that met the requirents of the query
         for equity in data:
             
             try:
@@ -93,7 +96,10 @@ class stock_data:
 
                     string_of_stocks = " ".join(stocks)
                     ticks = Tickers(string_of_stocks)
-                    stock_data = ticks.download(start=kwargs['start'], auto_adjust=kwargs['auto_adjust'], threads=kwargs['threads'], session=self.session)
+                    stock_data = ticks.download(start=kwargs['start'], 
+                                                auto_adjust=kwargs['auto_adjust'], 
+                                                threads=kwargs['threads'],                                                
+                                                session=self.session)
                     stock_data = self._create_stocks_df(list_of_stocks=stocks, data = stock_data)
                     self.stock_data = stock_data
                     self.stock_data['Trading_Date'] = self.stock_data['Trading_Date'].dt.date.copy()
@@ -112,6 +118,8 @@ class stock_data:
             list_of_data = []
             for stock in list_of_stocks:
                 try:
+                    if stock == 'AAPL':
+                            True
                     stock_dict = {'Trading_Date':data.index,
                                 'Open_Price':data[('Open', stock)].values,
                                 'High_Price':data[('High', stock)].values,
@@ -123,13 +131,10 @@ class stock_data:
                     if stock_df.empty:
                           print(f"{stock} doesn't have any data, we will not upload data for the stock")
                           continue  
-                    empty_values_df = stock_df.loc[stock_df['Close_Price'].isna()]
-                    if not empty_values_df.empty:
-                        print(f"{stock} has data with nan values, we will not upload the data into the database")
-                        continue
-                    else:
-                        stock_df['Ticker'] = stock  
-                        list_of_data.append(stock_df)    
+                    #remove dates that have a close price without a value
+                    stock_df = stock_df.loc[~stock_df['Close_Price'].isna()].copy()
+                    stock_df['Ticker'] = stock  
+                    list_of_data.append(stock_df)    
                 except Exception as e:
                     print(e)
                     continue
@@ -137,34 +142,3 @@ class stock_data:
             return stocks_df
         except Exception as e:
             raise e
-
-
-
-
-    def get_stock(self,stocks, start_date=None, end_date=None, index_as_date=False,jobs=1):
-        data = []
-        if jobs == 1:
-            #for stock in stocks:
-            try:
-                stock_data = self.data.get_data(stocks,start_date,end_date,index_as_date=index_as_date)
-                data.append(stock_data)
-                return stock_data
-            except Exception as e:
-                print(e)
-                return e
-            #df = pd.concat([pd.DataFrame(data=x) for x in data])
-            #self.stock_data = df
-            #return df
-            
-        else:
-            param_list = [{'ticker':x,'start_date':start_date} for x in stocks]
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                futures = [executor.submit(stock_info.get_data, ticker=param.get('ticker'),start_date=param.get('start_date'), index_as_date=index_as_date) for param in param_list]
-                for future in concurrent.futures.as_completed(futures):
-                    try:
-                        data.append(future.result())
-                    except Exception as e:
-                        print(e)
-            df = pd.concat([pd.DataFrame(data=x)for x in data])    
-            self.stock_data = df   
-            return self.stock_data
