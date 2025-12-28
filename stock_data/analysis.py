@@ -4,15 +4,23 @@ from datetime import datetime, timedelta
 from scipy.stats import norm
 from stock_data import stock_data_connector
 import os
+import io
 
 class analysis:
     def __init__(self):
         self.data = []
 
-    def add_columns(self, r_periods):
+    def data_analysis(self, data_stream, r_periods, analysis_start_date=None):
 
-        df = pd.read_csv('latest_data.csv', names = ['trading_date', 'ticker', 'open_price', 'high_price',
-                                                   'low_price', 'close_price', 'adjclose_price', 'volume'
+        df = pd.read_csv(data_stream, names = ['trading_date', 'ticker', 'open_price', 'high_price',
+                                                   'low_price', 'close_price', 'adjclose_price', 'volume',
+                                                   'sector', 'exchange', 'asset_type'
+                                                   ])
+        print(f"this is the size of the dataframe {df.size}")
+        """"
+        df = pd.read_csv(data_stream, names = ['trading_date', 'ticker', 'open_price', 'high_price',
+                                                   'low_price', 'close_price', 'adjclose_price', 'volume',
+                                                   'sector', 'exchange', 'asset_type'
                                                    ])
         df = df.loc[df['trading_date']!='0'].copy()
         df.sort_values(by=['ticker', 'trading_date'], inplace=True)
@@ -38,7 +46,12 @@ class analysis:
         df['macd_line'] = df['12_day_ema'] - df['26_day_ema']
         df['macd_signal_line'] = df['macd_line'].ewm(span=9, adjust=False, min_periods=9).mean()
         df['macd_diff'] =  df['macd_line'] - df['macd_signal_line']
+
+        if analysis_start_date:
+            df = df.loc[['trading_date']=='analysis_start_date']
+
         return df
+        """
 
     def get_data(self):
         return self.data
@@ -66,6 +79,7 @@ class analysis:
         """
         
         try:
+            print('downloading...')
             sdc = stock_data_connector()
             conn = sdc.connector.connect(host=os.environ['db_host'],
                                         database=os.environ['db_database'],
@@ -81,14 +95,15 @@ class analysis:
                                     Group by ticker
 
                             )
-                            Select *
-                            From stock_history
-                            where ticker in (Select ticker from data)
-                            and trading_date >= '2000-01-01'
+                            Select sh.*, si.sector_key,si.full_exchange_name, si.type_disp
+                            From stock_history sh
+                            left join stock_info si
+                            on sh.ticker = si.ticker
+                            where sh.ticker in (Select ticker from data)
+                            and sh.trading_date >= '2023-01-01'
             """)
             data = cursor.fetchall()
             df = pd.DataFrame(data)
-            df.to_csv('latest_data.csv', index=False, mode = 'w')
 
         except Exception as e:
             print(e)
@@ -97,4 +112,4 @@ class analysis:
             if conn != None:
                 conn.close()
                 sdc = None
-            return df
+        return df

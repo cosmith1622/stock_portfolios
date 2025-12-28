@@ -11,7 +11,7 @@ from botocore.exceptions import ClientError
 class portfolio:
 
 
-    def __init__(self, stock_data, max_price_per_share, starting_balance, max_equity_days):
+    def __init__(self, stock_data, max_price_per_share, starting_balance, max_equity_days, is_portfolio_file, is_back_testing):
 
         self.stock_data = stock_data
         self.max_price_per_share = max_price_per_share
@@ -20,6 +20,8 @@ class portfolio:
         self.current_balance = starting_balance
         self.pf_data = []
         self.performance = []
+        self.is_portfolio_file = is_portfolio_file
+        self.is_back_testing = is_back_testing
 
 
 
@@ -29,6 +31,8 @@ class portfolio:
         return date_list
     
     def _stock_criteria(self):
+
+
         df = self.stock_data
         df = df.loc[df['ticker'].isin(list(df['ticker'].unique()))]
         df = df.loc[(df['close_price']<= self.max_price_per_share)&
@@ -37,22 +41,69 @@ class portfolio:
                     (df['close_price']<df['upper_band'])&
                     (df['close_price']>df['lower_band'])&
                     (df['macd_line'] > df['macd_signal_line'])]
+        
+        if ~self.is_back_testing:
+            
+            df = df.loc[df['trading_date']==df['trading_date'].max()]
+
         return df
+    
+    def _stock_date_criteria(self,d):
+
+        #confirm the stocks that meet the necessary
+        #buying criteria also have all the dates
+        #we don't want to analyze stocks that have missing data
+        trading_window = self.stock_data.copy()
+        trading_window['trading_date'] = pd.to_datetime(trading_window['trading_date'])
+        trading_window = trading_window.loc[(trading_window['trading_date'] >= datetime.strptime(d,"%Y-%m-%d")) & 
+                                            (trading_window['trading_date'] <= datetime.strptime(d, "%Y-%m-%d")+ timedelta(days = self.max_equity_days))  ]
+        stock_count = trading_window['trading_date'].unique().size
+        stock_count_df = trading_window.groupby(by=['ticker'])['trading_date'].count().reset_index()
+        stock_count_df.rename(columns={'trading_date':'date_count'}, inplace=True)
+        stock_count_df = stock_count_df.loc[stock_count_df['date_count']==stock_count]
+        
+        return stock_count_df['ticker'].to_list()
+
 
 
     def update_portfolio(self):
 
+        #if the portfolio_file is true
+        #then we have a starting portfolio file
+        if self.portfolio_file:
+            try:
+                s3 = s3_connector()
+                s3.download_file('stock-bucket-01','performance','performance.csv')
+                portfolio_data = pd.read_csv('performance.csv', usecols=['ticker', 'trading_date','close_price', 
+                                                                            'probability', 'moving_average',
+                                                                            'projected_sell_date', 'sold_price',
+                                                                            'stock_cost', 'shares_to_purchase',
+                                                                            'macd_line', 'macd_signal_line',
+                                                                            'sector', 'exchange', 'asset_type'
+                                                                            ])
+                self.pf_data = portfolio_data.to_list()
+            except Exception as e:
+                print (e)
+
+
         matching_criteria_df = self._stock_criteria()
         sell_dates = self._unique_dates(self.stock_data)
+        #sell_dates = [x for x in sell_dates if int(x[:4]) == 2025]
         buy_dates = self._unique_dates(matching_criteria_df)
         matching_criteria_df.sort_values(by=['trading_date', 'yoy_change','probability'], ascending=[True, False, False], inplace=True)
         for d in sell_dates:
 
-            if  datetime.strptime(d, "%Y-%m-%d").year == 2003:
-                print('found')
-                performance_df = pd.DataFrame(self.performance)
-                performance_df.to_csv('performance.csv', index=False,mode='w')
+            #if  datetime.strptime(d, "%Y-%m-%d").year == 2003:
+                #print('found')
+                #performance_df = pd.DataFrame(self.performance)
+                #performance_df.to_csv('performance.csv', index=False,mode='w')
+
             df = matching_criteria_df.loc[matching_criteria_df['trading_date']==d].copy()
+            if df.empty:
+                print(f"The current date is {d}")
+                continue
+            else:
+                df = df.loc[df['ticker'].isin(self._stock_date_criteria(d))]
             print(f"The current date is {d}")
 
             #check if we have any stocks to see first
@@ -65,15 +116,24 @@ class portfolio:
                 self._sell_stock(self.pf_data, stocks_to_sell_df,d, .05)
 
             remaining_balance = self._get_balance()
-
-            if d in buy_dates:
-                stocks_added = self._add_stock(df,remaining_balance, self.pf_data)
-                if stocks_added:
-                        self.pf_data.extend(stocks_added)
-                        stock_purchase_cost = sum(row['stock_cost'] for row in stocks_added)
-                        self._withdraw(stock_purchase_cost)
             
-        return df
+            if df.empty:
+                continue
+            else:
+                if d in buy_dates:
+                    if self.pf_data:
+                        threshold_df = pd.DataFrame(data=self.pf_data)
+                        threshold_df = threshold_df.groupby(by=['sector'])['stock_cost'].sum().reset_index()
+                        threshold_df['pct_of_account'] = threshold_df['stock_cost'] / self.starting_balance
+                        threshold_df = threshold_df.loc[threshold_df['pct_of_account']>.25]
+                        df = df.loc[~df['sector'].isin(threshold_df['sector'].to_list())]
+                    stocks_added = self._add_stock(df,remaining_balance, self.pf_data)
+                    if stocks_added: 
+                            self.pf_data.extend(stocks_added)
+                            stock_purchase_cost = sum(row['stock_cost'] for row in stocks_added)
+                            self._withdraw(stock_purchase_cost)
+            
+        return pd.DataFrame(self.performance)
     
     def _add_stock(self,df, balance, cp):
 
@@ -93,7 +153,7 @@ class portfolio:
         try:
             stocks_to_buy.loc[stocks_to_buy['cumlative_stock_cost'] <= remaining_balance,'isPurchased'] = True
         except Exception as e:
-            print(e)
+            print(f"Unable to find any stocks to buy. Here is the exception: {e}" )
             return list()
         print(self._get_balance())
         stocks_to_buy = stocks_to_buy.loc[stocks_to_buy['isPurchased']==True].copy()
@@ -105,7 +165,8 @@ class portfolio:
                    'shares_to_purchase']].head(10))
             return stocks_to_buy[['trading_date', 'ticker', 'close_price',
                    'probability', 'moving_average','projected_sell_date', 'stock_cost',
-                   'shares_to_purchase', 'macd_diff', 'macd_line', 'macd_signal_line']].to_dict(orient='records')
+                   'shares_to_purchase', 'macd_diff', 'macd_line', 'macd_signal_line',
+                   'sector', 'exchange', 'asset_type']].to_dict(orient='records')
     
     def _sell_stock(self,current_portfolio, daily_data,current_date, exit_pct):
 
@@ -115,11 +176,12 @@ class portfolio:
         daily_data.rename(columns={'macd_line':'sold_macd_line', 'macd_signal_line':'sold_macd_signal_line'}, inplace=True)
         daily_data = daily_data.to_dict(orient='records')
         daily_data_updated = [{key: d[key] for key in ['ticker', 'upper_band', 'lower_band', 'sold_price', 'sold_macd_line', 'sold_macd_signal_line'] if key in d} for d in daily_data]
-        current_portfolio_updated = [{key: d[key] for key in ['ticker', 'close_price', 
+        current_portfolio_updated = [{key: d[key] for key in ['ticker', 'trading_date','close_price', 
                                                               'probability', 'moving_average',
                                                               'projected_sell_date', 'sold_price',
                                                               'stock_cost', 'shares_to_purchase',
-                                                              'macd_line', 'macd_signal_line'] if key in d} for d in current_portfolio]
+                                                              'macd_line', 'macd_signal_line',
+                                                              'sector', 'exchange', 'asset_type'] if key in d} for d in current_portfolio]
         updated_portfolio = self._merge_list(current_portfolio_updated, daily_data_updated)
 
         #sell the stock when current date is greater than the project sell date
@@ -146,8 +208,6 @@ class portfolio:
             daily_pct = (daily_revenue - amount_sold) / amount_sold
             print(f"For {current_date} the portfolio earned {(daily_revenue - amount_sold):.2f} in cash and the pct of return was {daily_pct:.2%}")
             [self.performance.append(row) for row in stocks_to_sell_updated]
-            #self.performance.append([row for row in stocks_to_sell_updated])
-        
 
 
     def _merge_list(self, current_portfolio, daily_data):

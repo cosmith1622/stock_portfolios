@@ -1,0 +1,8 @@
+services:
+  app:
+    build: .
+    volumes:
+      - $HOME/.aws:/home/app/.aws:ro
+    env_file:
+      - ./.env
+    stdin_open: true

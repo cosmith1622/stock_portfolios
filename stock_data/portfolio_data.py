@@ -8,6 +8,7 @@ from datetime import date, timedelta
 import boto3
 from botocore.exceptions import ClientError
 from datetime import datetime
+import io
 
 
 class portfolio_data:
@@ -25,38 +26,39 @@ class portfolio_data:
             and return the data to the caller
 
         """
+        #try:
+        print('getting latest data....')
+        today = date.today().strftime("%Y-%m-%d")
+        latest_stock_data_file_name = f"{today}_latest_stock_data"
+        latest_stock_data_file_path = f"./{today}_latest_stock_data.csv"
+            #self.s3.download_file(bucket,latest_stock_data_file_name,latest_stock_data_file_path)
+            #df = pd.read_csv(latest_stock_data_file_path)
+
+        #except Exception as e:
+
+            #print(f"{latest_stock_data_file_name} not found in s3 {bucket}, we will pull the data")
         try:
-            today = date.today().strftime("%Y-%m-%d")
-            latest_stock_data_file_name = f"{today}_latest_stock_data"
-            latest_stock_data_file_path = f"./{today}_latest_stock_data.csv"
-            self.s3.download_file(bucket,latest_stock_data_file_name,latest_stock_data_file_path)
-            df = pd.read_csv(latest_stock_data_file_path)
+            sdc = stock_data_connector()
+            conn = sdc.connector.connect(host=os.environ['db_host'],
+                                        database=os.environ['db_database'],
+                                        port=os.environ['db_port'], 
+                                        user=os.environ['db_user'], 
+                                        password=os.environ['db_password'])
+            cursor = conn.cursor()
+            cursor.execute("Select max(trading_date) as trading_date, ticker From dev.public.stock_history Group by ticker")
+            data = cursor.fetchall()
+            df = pd.DataFrame(data)
+            #df.to_csv(latest_stock_data_file_path, index=False)
+            #self.s3.upload_file(latest_stock_data_file_path,bucket,latest_stock_data_file_name)
+            #df = pd.read_csv(latest_stock_data_file_path)
 
         except Exception as e:
-
-            print(f"{latest_stock_data_file_name} not found in s3 {bucket}, we will pull the data")
-            try:
-                sdc = stock_data_connector()
-                conn = sdc.connector.connect(host=os.environ['db_host'],
-                                            database=os.environ['db_database'],
-                                            port=os.environ['db_port'], 
-                                            user=os.environ['db_user'], 
-                                            password=os.environ['db_password'])
-                cursor = conn.cursor()
-                cursor.execute("Select max(trading_date) as trading_date, ticker From dev.public.stock_history Group by ticker")
-                data = cursor.fetchall()
-                df = pd.DataFrame(data)
-                df.to_csv(latest_stock_data_file_path, index=False)
-                self.s3.upload_file(latest_stock_data_file_path,bucket,latest_stock_data_file_name)
-                df = pd.read_csv(latest_stock_data_file_path)
-
-            except Exception as e:
-                print(e)
-                raise e
-            finally:
-                if conn != None:
-                    conn.close()
-                    sdc = None
+            print(e)
+            raise e
+        finally:
+            if conn != None:
+                conn.close()
+                sdc = None
         return df #will need to update back to a list object
     
 
@@ -70,23 +72,26 @@ class portfolio_data:
         
         """
 
+        #try:
+        today = date.today().strftime("%Y-%m-%d")
+        find_equities_file_name = f"{today}_find_equities"
+        find_equities_file_path = f"./{today}_find_equities.csv"
+        #self.s3.download_file(bucket,find_equities_file_name,find_equities_file_path)
+        #df = pd.read_csv(find_equities_file_path)
+        #except Exception as e:
         try:
-            today = date.today().strftime("%Y-%m-%d")
-            find_equities_file_name = f"{today}_find_equities"
-            find_equities_file_path = f"./{today}_find_equities.csv"
-            self.s3.download_file(bucket,find_equities_file_name,find_equities_file_path)
-            df = pd.read_csv(find_equities_file_path)
+            self.sd = stock_data()
+            df = self.sd.find_equities(25)
+            df['start_date'] = date(2000,1,1)
+            csv_buffer = io.StringIO()
+            df.to_csv(csv_buffer, index=False)
+            #df.to_csv(find_equities_file_path, index=False)
+            self.s3.put_object(csv_buffer,bucket,find_equities_file_name)
+            #self.s3.upload_file(find_equities_file_path,bucket,find_equities_file_name)
+            #df = pd.read_csv(find_equities_file_path)
         except Exception as e:
-            try:
-                self.sd = stock_data()
-                df = self.sd.find_equities(25)
-                df['start_date'] = date(2000,1,1)
-                df.to_csv(find_equities_file_path, index=False)
-                self.s3.upload_file(find_equities_file_path,bucket,find_equities_file_name)
-                df = pd.read_csv(find_equities_file_path)
-            except Exception as e:
-                print(e)
-                raise e
+            print(e)
+            raise e
         return df
 
 
@@ -132,7 +137,7 @@ class portfolio_data:
             list_of_stocks = list_of_stocks['ticker'].unique().tolist()
             print(f"{ddate} has {len(list_of_stocks)} stocks")
             if ddate != date(2000,1,1):
-                start_date = datetime.strptime(ddate, "%Y-%m-%d").date() + timedelta(days=1)
+                start_date = datetime.strptime(ddate.strftime("%Y-%m-%d"), "%Y-%m-%d").date() + timedelta(days=1)
             else:
                     start_date = ddate
             try:
@@ -144,16 +149,68 @@ class portfolio_data:
                 print(e)
 
         prices_df = pd.concat(prices_list)
+        csv_buffer = io.StringIO()
+        prices_df.to_csv(csv_buffer, index=False)
+        #prices_df.to_csv(price_data_file_path, index=False)
+        self.s3.put_object(csv_buffer,bucket,price_data_file_name)
 
-        prices_df.to_csv(price_data_file_path, index=False)
-        self.s3.upload_file(price_data_file_path,bucket,price_data_file_name)
-
-    def insert_data(self, bucket):
+    def insert_price_data(self, bucket):
 
         #create the query for uploading the data
         today = date.today().strftime("%Y-%m-%d")
         price_data_file_name = f"{today}_price_data"     
         upload = f"copy stock_history (trading_date, open_price, high_price, low_price, close_price, volume, ticker) from 's3://{bucket}/{price_data_file_name}' iam_role default IGNOREHEADER 1 csv;"   
+
+        #copy the data from S3 to the redshift database
+        try:
+            sdc = stock_data_connector()
+            conn = sdc.connector.connect(host=os.environ['db_host'],
+                                database=os.environ['db_database'],
+                                port=os.environ['db_port'], 
+                                user=os.environ['db_user'], 
+                                password=os.environ['db_password'])
+            cursor = conn.cursor()
+            cursor.execute(upload)
+            conn.commit()
+        except Exception as e:
+            print(e)
+        finally:
+            if conn != None:
+                conn.close()
+                sdc = None
+
+    def get_stocks_without_info(self):  
+
+        #grab the latest stocks from the stock_history
+        #where it doesn't exist in the stock info
+        #we do this to avoid creating duplicates
+        try:
+            sdc = stock_data_connector()
+            conn = sdc.connector.connect(host=os.environ['db_host'],
+                                database=os.environ['db_database'],
+                                port=os.environ['db_port'], 
+                                user=os.environ['db_user'], 
+                                password=os.environ['db_password'])
+            cursor = conn.cursor()
+            cursor.execute("Select distinct ticker \
+                            From dev.public.stock_history \
+                            where ticker not in (Select distinct ticker from  dev.public.stock_info)")
+            data = cursor.fetchall()
+            df = pd.DataFrame(data)
+        except Exception as e:
+            print(e)
+        finally:
+            if conn != None:
+                conn.close()
+                sdc = None
+        return df
+
+    def insert_stock_data(self, bucket):
+
+        #create the query for uploading the data
+        today = date.today().strftime("%Y-%m-%d")
+        price_data_file_name = f"{today}_find_equities"     
+        upload = f"copy stock_info (ticker, industry, industry_key, industry_disp,sector, sector_key, sector_disp, type_disp,quote_type, currency, full_exhange_name, market) from 's3://{bucket}/{price_data_file_name}' iam_role default IGNOREHEADER 1 csv;"   
 
         #copy the data from S3 to the redshift database
         try:

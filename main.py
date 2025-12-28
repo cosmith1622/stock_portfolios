@@ -2,24 +2,36 @@ from stock_data import portfolio_data
 from stock_data import analysis
 from stock_data import portfolio
 from stock_data import stock_data
+from stock_data import s3_connector
 import pandas as pd
+import numpy as np
+from curl_cffi import requests
+import io
+import sys
+import os
 
 
-if __name__ == "__main__":
+def stocks_to_buy():
 
-
-    test = stock_data()
-    #df = test.get_stocks('DCOM', start='2001-01-01', auto_adjust=False, threads=True)
+    print('hi')
+    print(os.environ)
     ana = analysis()
-    #ana.get_stock_data()
-    df = ana.add_columns(252)
-    #df =  df.loc[df['ticker']=='DCOM'].copy()
-    #df = df.loc[(df['trading_date']=='2001-01-02') | (df['trading_date']=='2001-01-09')]
-    #print(df[['trading_date', 'close_price', 'probability', 'upper_band', 'lower_band']])
-    pf = portfolio(df,100,5000,20)
-    test1 = pf.update_portfolio()
-    #print(test1[['trading_date', 'ticker', 'close_price', 'last_year_price', 'yoy_change']].head())
+    df = ana.get_stock_data()
+    s3 = s3_connector()
+    csv_buffer = io.StringIO()
+    df = pd.read_csv(csv_buffer)
+    df.to_csv(csv_buffer, index=False)
+    s3.put_object(csv_buffer,'stock-bucket-01','stocks_to_trade')
+    df = ana.data_analysis(csv_buffer,252, '2023-01-01')
+    """
+    pf = portfolio(df,150,5000,20, true, false)
+    performance_df = pf.update_portfolio()
+    performance_df.to_csv('performance.csv', index=False,mode='w')
+    s3.upload_file('./performance.csv', 'stock-bucket-01', 'performance')
+    """
 
+
+def get_new_data():
 
     """
         Step 1 Get the latest stock date in the database.
@@ -27,10 +39,9 @@ if __name__ == "__main__":
         latest information for the stock.
 
     """
+    print(os.environ)
     pdata = portfolio_data()
-    #data =  pdata.get_latest_stock_data('stock-bucket-01')
-    data = pd.read_csv('2025-09-27_latest_stock_data_copy.csv')
-    data['0'] = '1999-12-31'
+    data =  pdata.get_latest_stock_data('stock-bucket-01')
 
     """
         Step 2 get updated stock information for the stocks
@@ -40,6 +51,7 @@ if __name__ == "__main__":
 
     """
 
+    
     df = pdata.get_latest_equities_data('stock-bucket-01')
 
 
@@ -60,11 +72,20 @@ if __name__ == "__main__":
     """
 
     pdata.get_stock_data(data,df,'stock-bucket-01')
+    
 
 
+    #Push the new stock data into the redshift db
 
-    """
-        Push the new stock data into the redshift db
 
-    """
-    pdata.insert_data('stock-bucket-01')
+    pdata.insert_price_data('stock-bucket-01')
+
+
+if __name__ == "__main__":
+
+    
+    if os.environ['start_up_args'] == '1':
+        get_new_data()
+    elif os.environ['start_up_args'] =='2':
+        stocks_to_buy()
+

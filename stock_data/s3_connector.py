@@ -69,3 +69,13 @@ class s3_connector:
             raise e
         except Exception as e:
             raise e
+        
+    def put_object(self,buffer,bucket, object_name=None):
+
+        try:
+            self.s3_client.put_object(Bucket=bucket,Key=object_name, Body=buffer.getvalue(), ContentType='text/csv')
+        
+        except ClientError as e:
+            logging.error(e)
+            print(f"{object_name} not found in s3 {bucket}.")
+            raise e
