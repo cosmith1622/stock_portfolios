@@ -9,23 +9,39 @@ from curl_cffi import requests
 import io
 import sys
 import os
+from datetime import timedelta, date
 
 
 def stocks_to_buy():
 
-    print('hi')
-    print(os.environ)
+    today = date.today()
+    """
+    
+        we are going to get two years from today
+        so we have compute all the metrics
+    
+    """
+    two_years_ago = today + timedelta(days=-730)
     ana = analysis()
-    df = ana.get_stock_data()
+    df = ana.get_stock_data(start_date=two_years_ago)
     s3 = s3_connector()
     csv_buffer = io.StringIO()
-    df = pd.read_csv(csv_buffer)
     df.to_csv(csv_buffer, index=False)
     s3.put_object(csv_buffer,'stock-bucket-01','stocks_to_trade')
-    df = ana.data_analysis(csv_buffer,252, '2023-01-01')
-    """
-    pf = portfolio(df,150,5000,20, true, false)
+    df = ana.data_analysis(df,252)
+
+    pf = portfolio(df,150,5000,20, False, False)
     performance_df = pf.update_portfolio()
+
+    csv_buffer = io.StringIO()
+    stock_to_buy_df = pd.DataFrame(pf.stocks_to_purchase)
+    stock_to_buy_df.to_csv(csv_buffer, index=False)
+    file_name = date.today()
+    file_name = f"stocks_to_purchase_{file_name.strftime('%Y-%m-%d')}.csv"
+    s3.put_object(csv_buffer,'stock-bucket-01',file_name)
+    print('cole')
+
+    """
     performance_df.to_csv('performance.csv', index=False,mode='w')
     s3.upload_file('./performance.csv', 'stock-bucket-01', 'performance')
     """
@@ -41,7 +57,7 @@ def get_new_data():
     """
     print(os.environ)
     pdata = portfolio_data()
-    data =  pdata.get_latest_stock_data('stock-bucket-01')
+    data = pdata.get_latest_stock_data('stock-bucket-01')
 
     """
         Step 2 get updated stock information for the stocks

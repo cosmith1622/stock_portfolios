@@ -20,31 +20,59 @@ class portfolio:
         self.current_balance = starting_balance
         self.pf_data = []
         self.performance = []
+        self.stocks_to_purchase = []
         self.is_portfolio_file = is_portfolio_file
         self.is_back_testing = is_back_testing
 
 
 
     def _unique_dates(self, df):
+
         date_list = df['trading_date'].unique()
-        date_list.sort()
+        if self.is_back_testing:
+            date_list.sort()
+        else:
+            date_list.sort()
+            date_list = date_list[::-1]
+            date_list = np.array(date_list[0])
+            date_list = np.atleast_1d(date_list) 
         return date_list
     
     def _stock_criteria(self):
 
+        """
+            we use this function
+            to decide which stock meet the criteria to 
+            be evaulated for purchase
 
+
+            As the setting are today, we are looking for stocks that
+            the price is less than or equal to our max price, the yoy_change 
+            is not na aka the stocks has been sold for at least a yeat,
+            the probablity is less than .25, which means the probablity of sucess is equal
+            to or above 75%.  The stock must be above the lower band and below the upper band, so 
+            we want a stock that recently came off a high.  The macd line is above 
+            the macd signla line which is showing an increase in volume.
+        
+        """
         df = self.stock_data
         df = df.loc[df['ticker'].isin(list(df['ticker'].unique()))]
         df = df.loc[(df['close_price']<= self.max_price_per_share)&
                     (~df['yoy_change'].isna())&
-                    (df['probability']<.25)&
+                    (df['probability']<.4)&
                     (df['close_price']<df['upper_band'])&
                     (df['close_price']>df['lower_band'])&
-                    (df['macd_line'] > df['macd_signal_line'])]
+                    (df['macd_line'] > df['macd_signal_line'])&
+                    (df['macd_line'].shift(1) <= df['macd_signal_line'].shift(1))&
+                    (df['moving_average_volume'] >= 500000)]
         
         if ~self.is_back_testing:
-            
+
             df = df.loc[df['trading_date']==df['trading_date'].max()]
+            df.sort_values(by=['trading_date', 'yoy_change','probability'], ascending=[False, False, False], inplace=True)
+
+        else:
+            df.sort_values(by=['trading_date', 'yoy_change','probability'], ascending=[True, False, False], inplace=True)
 
         return df
     
@@ -53,6 +81,8 @@ class portfolio:
         #confirm the stocks that meet the necessary
         #buying criteria also have all the dates
         #we don't want to analyze stocks that have missing data
+        if isinstance(d,date):
+            d = d.strftime("%Y-%m-%d")
         trading_window = self.stock_data.copy()
         trading_window['trading_date'] = pd.to_datetime(trading_window['trading_date'])
         trading_window = trading_window.loc[(trading_window['trading_date'] >= datetime.strptime(d,"%Y-%m-%d")) & 
@@ -70,10 +100,11 @@ class portfolio:
 
         #if the portfolio_file is true
         #then we have a starting portfolio file
-        if self.portfolio_file:
+        if self.is_portfolio_file:
             try:
                 s3 = s3_connector()
-                s3.download_file('stock-bucket-01','performance','performance.csv')
+                portfolio_data = s3.get_object('stock-bucket-01','performance')
+                #s3.download_file('stock-bucket-01','performance','performance.csv')
                 portfolio_data = pd.read_csv('performance.csv', usecols=['ticker', 'trading_date','close_price', 
                                                                             'probability', 'moving_average',
                                                                             'projected_sell_date', 'sold_price',
@@ -87,10 +118,18 @@ class portfolio:
 
 
         matching_criteria_df = self._stock_criteria()
+
+        #the dates that we can sell a stock
+        #the sell dates will always have more dates
+        #compared to the buy dates as we can always sell
+        #if the market is open, but we will only buy if the stocks'
+        #match the other criteria.
         sell_dates = self._unique_dates(self.stock_data)
         #sell_dates = [x for x in sell_dates if int(x[:4]) == 2025]
+
+        #the date we can buy a stock
         buy_dates = self._unique_dates(matching_criteria_df)
-        matching_criteria_df.sort_values(by=['trading_date', 'yoy_change','probability'], ascending=[True, False, False], inplace=True)
+        #matching_criteria_df.sort_values(by=['trading_date', 'yoy_change','probability'], ascending=[True, False, False], inplace=True)
         for d in sell_dates:
 
             #if  datetime.strptime(d, "%Y-%m-%d").year == 2003:
@@ -132,6 +171,7 @@ class portfolio:
                             self.pf_data.extend(stocks_added)
                             stock_purchase_cost = sum(row['stock_cost'] for row in stocks_added)
                             self._withdraw(stock_purchase_cost)
+                            self.stocks_to_purchase = stocks_added
             
         return pd.DataFrame(self.performance)
     

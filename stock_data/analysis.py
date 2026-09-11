@@ -10,18 +10,13 @@ class analysis:
     def __init__(self):
         self.data = []
 
-    def data_analysis(self, data_stream, r_periods, analysis_start_date=None):
+    def data_analysis(self, data_stream, r_periods):
 
-        df = pd.read_csv(data_stream, names = ['trading_date', 'ticker', 'open_price', 'high_price',
-                                                   'low_price', 'close_price', 'adjclose_price', 'volume',
-                                                   'sector', 'exchange', 'asset_type'
-                                                   ])
-        print(f"this is the size of the dataframe {df.size}")
-        """"
-        df = pd.read_csv(data_stream, names = ['trading_date', 'ticker', 'open_price', 'high_price',
-                                                   'low_price', 'close_price', 'adjclose_price', 'volume',
-                                                   'sector', 'exchange', 'asset_type'
-                                                   ])
+        print(data_stream.columns)
+        df = data_stream.copy()
+        df.rename(columns={'full_exchange':'exchange',
+                           'type_disp':'asset_type',
+                           'sector_key':'sector'},inplace=True)
         df = df.loc[df['trading_date']!='0'].copy()
         df.sort_values(by=['ticker', 'trading_date'], inplace=True)
         df['previous_price'] = df.groupby(by=['ticker'])['close_price'].shift(periods=1)
@@ -34,6 +29,7 @@ class analysis:
         df['daily_return'] = np.log(df['close_price'] / df['previous_price'])
         df['stdev'] =df.groupby(by=['ticker'])['close_price'].transform(lambda x: x.rolling(20, min_periods=20).std())
         df['moving_average'] = df.groupby(by=['ticker'])['close_price'].transform(lambda x: x.rolling(20, min_periods=20).mean()).round(decimals=2)
+        df['moving_average_volume'] = df.groupby(by=['ticker'])['volume'].transform(lambda x: x.rolling(20, min_periods=20).mean()).round(decimals=2)
         df['upper_band'] = df['moving_average'] + (df['stdev'] * 2)
         df['lower_band'] = df['moving_average'] - (df['stdev'] * 2)
         df.loc[(df['yoy_change']>=0) & (df['moving_average'].notna()) ,'Testable'] = 1
@@ -47,11 +43,8 @@ class analysis:
         df['macd_signal_line'] = df['macd_line'].ewm(span=9, adjust=False, min_periods=9).mean()
         df['macd_diff'] =  df['macd_line'] - df['macd_signal_line']
 
-        if analysis_start_date:
-            df = df.loc[['trading_date']=='analysis_start_date']
-
+        
         return df
-        """
 
     def get_data(self):
         return self.data
@@ -67,7 +60,7 @@ class analysis:
         print(self.data.tail())
         print('cole')
 
-    def get_stock_data(self):
+    def get_stock_data(self, start_date):
 
         """
             grab the latest date we have for each stock
@@ -79,7 +72,6 @@ class analysis:
         """
         
         try:
-            print('downloading...')
             sdc = stock_data_connector()
             conn = sdc.connector.connect(host=os.environ['db_host'],
                                         database=os.environ['db_database'],
@@ -87,24 +79,33 @@ class analysis:
                                         user=os.environ['db_user'], 
                                         password=os.environ['db_password'])
             cursor = conn.cursor()
-            cursor.execute("""with data as (
-
-                                    Select ticker
-                                    From stock_history
-                                    where trading_date = (Select max(trading_date) from stock_history)
-                                    Group by ticker
-
-                            )
-                            Select sh.*, si.sector_key,si.full_exchange_name, si.type_disp
-                            From stock_history sh
-                            left join stock_info si
-                            on sh.ticker = si.ticker
-                            where sh.ticker in (Select ticker from data)
-                            and sh.trading_date >= '2023-01-01'
-            """)
+            sql = (
+                 
+                    """with data as (Select ticker From stock_history where trading_date = (Select max(trading_date) from stock_history) Group by ticker
+                    ) Select 
+                        sh.trading_date,
+                        sh.ticker,
+                        sh.open_price,
+                        sh.high_price,
+                        sh.low_price,
+                        sh.close_price,
+                        sh.adjclose_price,
+                        sh.volume,
+                        si.sector_key,
+                        si.full_exchange_name,
+                        si.type_disp
+                       From stock_history sh
+                       left join stock_info si
+                       on sh.ticker = si.ticker
+                       where sh.ticker in (Select ticker from data)
+                       and sh.trading_date >= %s"""
+            )
+            cursor.execute(sql, (start_date,))
             data = cursor.fetchall()
-            df = pd.DataFrame(data)
-
+            df = pd.DataFrame(data,columns=['trading_date', 'ticker', 'open_price',
+                                            'high_price', 'low_price', 'close_price',
+                                            'adjclose_price', 'volume', 'sector_key',
+                                            'full_exchange', 'type_disp'])
         except Exception as e:
             print(e)
             raise e

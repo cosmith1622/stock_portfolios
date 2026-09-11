@@ -79,3 +79,14 @@ class s3_connector:
             logging.error(e)
             print(f"{object_name} not found in s3 {bucket}.")
             raise e
+        
+    def get_object(self, bucket, file_name):
+    
+        try:
+            object = self.s3_client.get_object(Bucket=bucket, Key=file_name)
+            return  object['Body'].read()
+        
+        except ClientError as e:
+            logging.error(e)
+            print(f"{file_name} not found in s3 {bucket}.")
+            raise e
